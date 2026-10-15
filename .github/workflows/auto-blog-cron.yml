@@ -1,0 +1,92 @@
+name: 🤖 Auto Blog Cron (Every 10 Min)
+
+on:
+  schedule:
+    # Har 5 minute pe chalega — 20 min delivery guarantee ke liye
+    # UTC time: */5 = 0,5,10,15,20,25,30,35,40,45,50,55 min pe har ghante
+    - cron: "*/5 * * * *"
+
+  # Manual trigger bhi possible hai (GitHub → Actions → Run workflow)
+  workflow_dispatch:
+    inputs:
+      reason:
+        description: "Manual trigger reason"
+        required: false
+        default: "Manual test run"
+
+jobs:
+  trigger-auto-blog:
+    name: Trigger Auto Blog Scraper
+    runs-on: ubuntu-latest
+    timeout-minutes: 8
+
+    steps:
+      - name: 📥 Checkout repository
+        uses: actions/checkout@v4
+
+      - name: 🐍 Set up Python
+        uses: actions/setup-python@v5
+        with:
+          python-version: '3.11'
+
+      - name: 🌐 Run SarkariResult RSS Fetcher (Bypasses Cloudflare)
+        run: |
+          echo "🌐 Running SarkariResult RSS fetcher at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          python3 scripts/sr_rss_fetcher.py
+        env:
+          NEXT_PUBLIC_BASE_URL: "https://www.rojgarsuvidha.com"
+          NEXT_PUBLIC_SUPABASE_URL: ${{ secrets.NEXT_PUBLIC_SUPABASE_URL }}
+          SUPABASE_SERVICE_ROLE_KEY: ${{ secrets.SUPABASE_SERVICE_ROLE_KEY }}
+          CRON_SECRET: ${{ secrets.CRON_SECRET || 'rojgarsuvidha_auto_blog_2026' }}
+
+      - name: 📡 Trigger Auto Blog Cron API (FreeJobAlert & Trends)
+        id: trigger
+        run: |
+          echo "⏰ Triggering auto blog cron at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+
+          HTTP_STATUS=$(curl -s -o /tmp/response.txt -w "%{http_code}" \
+            --max-time 300 \
+            --retry 2 \
+            --retry-delay 10 \
+            -X GET \
+            "https://www.rojgarsuvidha.com/api/auto-blog/cron?key=${{ secrets.CRON_SECRET || 'rojgarsuvidha_auto_blog_2026' }}")
+
+          echo "HTTP Status: $HTTP_STATUS"
+          echo "Response: $(cat /tmp/response.txt)"
+
+          if [ "$HTTP_STATUS" = "200" ]; then
+            echo "✅ Cron triggered successfully!"
+          else
+            echo "❌ Cron failed with HTTP $HTTP_STATUS"
+            exit 1
+          fi
+
+      - name: 🚀 Auto-Publish Matured SarkariResult Drafts (First Pass)
+        if: always()
+        run: |
+          echo "🚀 First auto-publisher pass at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          curl -s --max-time 60 \
+            "https://www.rojgarsuvidha.com/api/cron/auto-publisher?key=${{ secrets.CRON_SECRET || 'rojgarsuvidha_auto_blog_2026' }}"
+          echo ""
+          echo "First pass complete."
+
+      - name: ⏳ Wait for SR Drafts to Mature (5 min buffer)
+        if: always()
+        run: |
+          echo "⏳ Waiting 5 min for freshly created SR drafts to mature..."
+          sleep 300
+          echo "Wait complete — running second auto-publisher pass"
+
+      - name: 🚀 Auto-Publish Matured SarkariResult Drafts (Second Pass)
+        if: always()
+        run: |
+          echo "🚀 Second auto-publisher pass at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
+          curl -s --max-time 60 \
+            "https://www.rojgarsuvidha.com/api/cron/auto-publisher?key=${{ secrets.CRON_SECRET || 'rojgarsuvidha_auto_blog_2026' }}"
+          echo ""
+          echo "Second pass complete — SR posts from THIS run should now be live!"
+
+      - name: 📊 Log Result
+        if: always()
+        run: |
+          echo "Run completed at $(date -u '+%Y-%m-%d %H:%M:%S UTC')"
