@@ -598,6 +598,21 @@ def main():
             log(f"  ✅ Draft created: draftId={draft_id}")
             log(f"  ⏳ 10-Minute Auto-Publish Active (ID: {draft_id})")
             success_count += 1
+            # Mark URL in scraped_urls_log immediately so no concurrent or subsequent runner touches it
+            try:
+                log_payload = json.dumps({
+                    "url": item["link"],
+                    "scraped_at": datetime.now(timezone.utc).isoformat()
+                }).encode("utf-8")
+                ins_log_req = urllib.request.Request(
+                    f"{SUPABASE_URL}/rest/v1/scraped_urls_log",
+                    headers={"apikey": SUPABASE_KEY, "Authorization": f"Bearer {SUPABASE_KEY}", "Content-Type": "application/json", "Prefer": "resolution=merge-duplicates"},
+                    data=log_payload,
+                    method="POST"
+                )
+                urllib.request.urlopen(ins_log_req, timeout=10, context=SSL_CTX)
+            except Exception as log_err:
+                log(f"Notice logging to scraped_urls_log: {log_err}")
         else:
             log(f"  ❌ Failed: {result.get('error', 'unknown')}")
 
